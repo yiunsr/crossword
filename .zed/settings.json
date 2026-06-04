@@ -1,0 +1,18 @@
+{
+    "disable_ai": false,
+    "tab_size": 4,
+    "languages": {
+        "JavaScript": {
+            "tab_size": 2
+        },
+        "Python": {
+            "tab_size": 4
+        },
+        "JSON": {
+            "tab_size": 4
+        },
+        "Markdown": {
+            "tab_size": 2
+        }
+    }
+}

@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "한국어 십자말 풀이",
+  "version": "0.1.0",
+  "description": "스테이지 기반 한국어 십자말 풀이 확장프로그램",
+  "permissions": ["storage"],
+  "action": {
+    "default_title": "십자말 풀이",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "extension.js"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "crossword@example.local"
+    }
+  }
+}

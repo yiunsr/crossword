@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<clues>
+  <clue>
+    <word>원자</word>
+    <theme>과학</theme>
+    <description>물질을 이루는 기본 단위</description>
+  </clue>
+  <clue>
+    <word>세포</word>
+    <theme>과학</theme>
+    <description>생물체 구조의 기본 단위</description>
+  </clue>
+</clues>
