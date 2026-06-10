@@ -23,3 +23,10 @@
 
 ## 사전 구성
 *
+
+
+
+## License
+* 한국어기초사전
+  * https://krdict.korean.go.kr/download/downloadPopup
+  * CCL BY-SA 2.0 KR
