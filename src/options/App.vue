@@ -23,6 +23,14 @@ const clues = [
 
 <template>
   <main class="page">
+    <header class="topbar panel">
+      <div>
+        <p class="eyebrow">GAME PLAY</p>
+        <h1 class="page-title">게임 플레이</h1>
+      </div>
+      <a class="back-link" href="/">메뉴로 돌아가기</a>
+    </header>
+
     <section class="hero panel">
       <StageHeader :stage="stage" />
       <TimerDisplay :seconds="elapsedSeconds" />
@@ -47,6 +55,33 @@ const clues = [
   padding: 24px;
 }
 
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: #2563eb;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.back-link {
+  color: #1d4ed8;
+  text-decoration: none;
+  font-weight: 600;
+}
+
 .hero {
   display: flex;
   justify-content: space-between;
@@ -68,6 +103,7 @@ const clues = [
 }
 
 @media (max-width: 900px) {
+  .topbar,
   .hero,
   .content-grid {
     grid-template-columns: 1fr;

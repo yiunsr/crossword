@@ -13,7 +13,7 @@ const openOptionsPage = () => {
       초기 확장프로그램 골격입니다.
     </p>
 
-    <button type="button" @click="openOptionsPage">게임 화면 열기</button>
+    <button type="button" @click="openOptionsPage">메뉴 화면 열기</button>
   </main>
 </template>
 
