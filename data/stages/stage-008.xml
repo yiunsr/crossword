@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<stage>
+  <meta
+    id="stage-008"
+    level="8"
+    title="stage-008"
+    version="1.0"
+  />
+
+  <dictionary version="v0001" />
+
+  <board rows="10" columns="10" />
+
+  <playWords target="9" range="1" />
+
+  <categories>
+    <category name="일상" />
+    <category name="과학" />
+    <category name="경제" />
+    <category name="고사성어" />
+  </categories>
+
+  <grades>
+    <grade value="1" />
+    <grade value="2" />
+    <grade value="3" />
+  </grades>
+
+  <requiredGroups>
+    <group id="A">
+      <word text="일목요연" category="고사성어" grade="3" />
+      <word text="연락" category="일상" grade="1" />
+    </group>
+    <group id="B">
+      <word text="벤처" category="경제" grade="3" />
+      <word text="벤젠" category="과학" grade="2" />
+    </group>
+  </requiredGroups>
+
+  <randomWordPolicy count="1" />
+
+  <seedPolicy defaultSeed="27" min="0" max="100" />
+</stage>

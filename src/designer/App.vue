@@ -1,11 +1,13 @@
 <script setup>
 import { computed, ref } from 'vue';
+import JSZip from 'jszip';
 import dictionaryCsvText from '../../data/사전.v0001.csv?raw';
 import { parseCsv } from '@/utils/csv';
 import { shuffleWithSeed } from '@/utils/seededRandom';
 
 const categoryOrder = ['일상', '과학', '경제', '지리', '고사성어'];
 const gradeOptions = ['1', '2', '3', '4'];
+const batchStageCount = 10;
 
 const stageNumber = ref(25);
 const seed = ref(27);
@@ -36,6 +38,10 @@ function normalizeSeed(nextSeed) {
   return Math.max(0, Math.min(100, Number(nextSeed) || 0));
 }
 
+function normalizeStageNumber(nextStageNumber) {
+  return Math.max(1, Number(nextStageNumber) || 1);
+}
+
 function uniqueChars(word) {
   return [...new Set([...word])];
 }
@@ -53,12 +59,19 @@ function isCrossable(left, right) {
   return Boolean(left && right && left.word !== right.word && getCrossChar(left, right));
 }
 
-function nextSeedValue(offset = 0) {
-  return normalizeSeed(seed.value + rerollCount.value + offset);
+function getStageFilename(nextStageNumber) {
+  return `stage-${String(normalizeStageNumber(nextStageNumber)).padStart(3, '0')}.xml`;
 }
 
-function downloadTextFile(filename, content) {
-  const blob = new Blob([content], { type: 'application/xml;charset=utf-8' });
+function getZipFilename(nextStageNumber) {
+  return `stages-${String(normalizeStageNumber(nextStageNumber)).padStart(3, '0')}-${String(normalizeStageNumber(nextStageNumber) + batchStageCount - 1).padStart(3, '0')}.zip`;
+}
+
+function getStageSeedValue(nextStageNumber, offset = 0) {
+  return normalizeSeed(seed.value) + normalizeStageNumber(nextStageNumber) * 1009 + offset;
+}
+
+function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -69,6 +82,11 @@ function downloadTextFile(filename, content) {
   URL.revokeObjectURL(url);
 }
 
+function downloadTextFile(filename, content) {
+  const blob = new Blob([content], { type: 'application/xml;charset=utf-8' });
+  downloadBlob(filename, blob);
+}
+
 function isDevServerEnvironment() {
   return typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 }
@@ -77,22 +95,19 @@ function supportsFilePicker() {
   return typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
 }
 
-async function saveWithFilePicker(fileName, content) {
+async function saveWithFilePicker(fileName, blob, description, accept) {
   const handle = await window.showSaveFilePicker({
     suggestedName: fileName,
     types: [
       {
-        description: 'Stage XML',
-        accept: {
-          'application/xml': ['.xml'],
-          'text/xml': ['.xml'],
-        },
+        description,
+        accept,
       },
     ],
   });
 
   const writable = await handle.createWritable();
-  await writable.write(content);
+  await writable.write(blob);
   await writable.close();
 
   return {
@@ -127,7 +142,15 @@ async function saveViaDevServer(fileName, content) {
 async function saveStageFile(fileName, content) {
   if (supportsFilePicker()) {
     try {
-      return await saveWithFilePicker(fileName, content);
+      return await saveWithFilePicker(
+        fileName,
+        new Blob([content], { type: 'application/xml;charset=utf-8' }),
+        'Stage XML',
+        {
+          'application/xml': ['.xml'],
+          'text/xml': ['.xml'],
+        },
+      );
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new Error('파일 저장이 취소되었습니다.');
@@ -140,6 +163,28 @@ async function saveStageFile(fileName, content) {
   }
 
   downloadTextFile(fileName, content);
+  return {
+    ok: true,
+    mode: 'download',
+    message: '브라우저 다운로드 방식으로 저장했습니다.',
+  };
+}
+
+async function saveZipFile(fileName, blob) {
+  if (supportsFilePicker()) {
+    try {
+      return await saveWithFilePicker(fileName, blob, 'Stage ZIP', {
+        'application/zip': ['.zip'],
+        'application/x-zip-compressed': ['.zip'],
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('파일 저장이 취소되었습니다.');
+      }
+    }
+  }
+
+  downloadBlob(fileName, blob);
   return {
     ok: true,
     mode: 'download',
@@ -163,8 +208,6 @@ const groupedCandidates = computed(() => ({
 
 const minPlayWords = computed(() => Math.max(1, Number(targetPlayWords.value) - 1));
 const maxPlayWords = computed(() => Number(targetPlayWords.value) + 1);
-const connectorMin = computed(() => Math.max(0, minPlayWords.value - 5));
-const connectorMax = computed(() => Math.max(connectorMin.value, maxPlayWords.value - 5));
 
 function choosePairForAnchor(anchor, candidates, excludedIds, seedBase) {
   const pool = shuffleWithSeed(
@@ -192,30 +235,37 @@ function chooseFreePair(candidates, excludedIds, seedBase) {
   return null;
 }
 
-function generateRecommendation() {
-  const nextWarnings = [];
-  const lockedWords = generationState.value?.groups
-    ?.flatMap((group) => group.words)
-    .filter((item) => pinnedWords.value.has(item.id)) ?? [];
+function buildGenerationState(selectedGroups) {
+  return {
+    groups: selectedGroups.map((group) => ({
+      ...group,
+      crossChar: getCrossChar(group.words[0], group.words[1]),
+    })),
+  };
+}
 
+function generateRecommendationState({ nextStageNumber, rerollOffset = 0, lockedWords = [] } = {}) {
+  const nextWarnings = [];
   const lockedIdSet = new Set(lockedWords.map((item) => item.id));
   const idioms = groupedCandidates.value.idioms;
   const nonIdioms = groupedCandidates.value.nonIdioms;
 
   if (!idioms.length) {
-    generationState.value = null;
-    warnings.value = ['선택한 카테고리/등급 조합으로는 고사성어 후보를 찾을 수 없습니다.'];
-    return;
+    return {
+      state: null,
+      warnings: ['선택한 카테고리/등급 조합으로는 고사성어 후보를 찾을 수 없습니다.'],
+    };
   }
 
   if (nonIdioms.length < 3) {
-    generationState.value = null;
-    warnings.value = ['필수 단어를 구성하기 위한 일반 단어 후보가 부족합니다.'];
-    return;
+    return {
+      state: null,
+      warnings: ['필수 단어를 구성하기 위한 일반 단어 후보가 부족합니다.'],
+    };
   }
 
   const lockedIdiom = lockedWords.find((item) => item.category === '고사성어') ?? null;
-  const seedBase = nextSeedValue();
+  const seedBase = getStageSeedValue(nextStageNumber, rerollOffset);
   const idiomPool = lockedIdiom ? [lockedIdiom] : shuffleWithSeed(
     idioms.filter((item) => !lockedIdSet.has(item.id)),
     seedBase,
@@ -275,9 +325,10 @@ function generateRecommendation() {
   }
 
   if (!selectedGroups) {
-    generationState.value = null;
-    warnings.value = ['현재 조건으로는 실제 교차 가능한 필수 단어 4개를 찾지 못했습니다.'];
-    return;
+    return {
+      state: null,
+      warnings: ['현재 조건으로는 실제 교차 가능한 필수 단어 4개를 찾지 못했습니다.'],
+    };
   }
 
   const allWords = selectedGroups.flatMap((group) => group.words);
@@ -287,13 +338,25 @@ function generateRecommendation() {
     nextWarnings.push('추천 결과에 중복 단어가 있어 다시 추천이 필요합니다.');
   }
 
-  generationState.value = {
-    groups: selectedGroups.map((group) => ({
-      ...group,
-      crossChar: getCrossChar(group.words[0], group.words[1]),
-    })),
+  return {
+    state: buildGenerationState(selectedGroups),
+    warnings: nextWarnings,
   };
-  warnings.value = nextWarnings;
+}
+
+function generateRecommendation() {
+  const lockedWords = generationState.value?.groups
+    ?.flatMap((group) => group.words)
+    .filter((item) => pinnedWords.value.has(item.id)) ?? [];
+
+  const result = generateRecommendationState({
+    nextStageNumber: stageNumber.value,
+    rerollOffset: rerollCount.value,
+    lockedWords,
+  });
+
+  generationState.value = result.state;
+  warnings.value = result.warnings;
 }
 
 function handleRecommend() {
@@ -377,7 +440,10 @@ function replaceWord(groupId, wordId) {
     [counterKey]: nextCounter,
   };
 
-  const replacement = shuffleWithSeed(pool, nextSeedValue(nextCounter + 100))
+  const replacement = shuffleWithSeed(
+    pool,
+    getStageSeedValue(stageNumber.value, rerollCount.value + nextCounter + 100),
+  )
     .filter((candidate) => !usedIds.has(candidate.id))
     .find((candidate) => isCrossable(candidate, partnerWord));
 
@@ -391,22 +457,23 @@ function replaceWord(groupId, wordId) {
   warnings.value = warnings.value.filter((item) => !item.includes('교체 가능한 후보'));
 }
 
-function buildXmlText() {
-  if (!generationState.value) {
+function buildXmlText({ nextStageNumber, state }) {
+  if (!state) {
     return '';
   }
 
+  const normalizedStageNumber = normalizeStageNumber(nextStageNumber);
   const categoriesXml = selectedCategories.value
     .map((category) => `    <category name="${category}" />`)
     .join('\n');
   const gradesXml = selectedGrades.value
     .map((grade) => `    <grade value="${grade}" />`)
     .join('\n');
-  const groupsXml = generationState.value.groups
+  const groupsXml = state.groups
     .map((group) => `    <group id="${group.id}">\n${group.words.map((word) => `      <word text="${word.word}" category="${word.category}" grade="${word.grade}" />`).join('\n')}\n    </group>`)
     .join('\n');
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<stage>\n  <meta\n    id="stage-${String(stageNumber.value).padStart(3, '0')}"\n    level="${stageNumber.value}"\n    title="stage-${String(stageNumber.value).padStart(3, '0')}"\n    version="1.0"\n  />\n\n  <dictionary version="v0001" />\n\n  <board rows="${rows.value}" columns="${columns.value}" />\n\n  <playWords target="${targetPlayWords.value}" range="1" />\n\n  <categories>\n${categoriesXml}\n  </categories>\n\n  <grades>\n${gradesXml}\n  </grades>\n\n  <requiredGroups>\n${groupsXml}\n  </requiredGroups>\n\n  <randomWordPolicy count="1" />\n\n  <connectorWordPolicy min="${connectorMin.value}" max="${connectorMax.value}" />\n\n  <seedPolicy defaultSeed="${normalizeSeed(seed.value)}" min="0" max="100" />\n</stage>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<stage>\n  <meta\n    id="stage-${String(normalizedStageNumber).padStart(3, '0')}"\n    level="${normalizedStageNumber}"\n    title="stage-${String(normalizedStageNumber).padStart(3, '0')}"\n    version="1.0"\n  />\n\n  <dictionary version="v0001" />\n\n  <board rows="${rows.value}" columns="${columns.value}" />\n\n  <playWords target="${targetPlayWords.value}" range="1" />\n\n  <categories>\n${categoriesXml}\n  </categories>\n\n  <grades>\n${gradesXml}\n  </grades>\n\n  <requiredGroups>\n${groupsXml}\n  </requiredGroups>\n\n  <randomWordPolicy count="1" />\n\n  <seedPolicy defaultSeed="${normalizeSeed(seed.value)}" min="0" max="100" />\n</stage>`;
 }
 
 async function handleSaveXml() {
@@ -415,8 +482,11 @@ async function handleSaveXml() {
     return;
   }
 
-  const xmlText = buildXmlText();
-  const filename = `stage-${String(stageNumber.value).padStart(3, '0')}.xml`;
+  const filename = getStageFilename(stageNumber.value);
+  const xmlText = buildXmlText({
+    nextStageNumber: stageNumber.value,
+    state: generationState.value,
+  });
 
   isSaving.value = true;
   saveStatus.value = '';
@@ -442,6 +512,46 @@ async function handleSaveXml() {
   }
 }
 
+async function handleBatchDownload() {
+  isSaving.value = true;
+  saveStatus.value = '';
+
+  try {
+    const startStageNumber = normalizeStageNumber(stageNumber.value);
+    const zip = new JSZip();
+
+    for (let index = 0; index < batchStageCount; index += 1) {
+      const currentStageNumber = startStageNumber + index;
+      const result = generateRecommendationState({ nextStageNumber: currentStageNumber });
+
+      if (!result.state) {
+        throw new Error(`${getStageFilename(currentStageNumber)} 생성 실패: ${result.warnings.join(' ')}`);
+      }
+
+      const xmlText = buildXmlText({
+        nextStageNumber: currentStageNumber,
+        state: result.state,
+      });
+
+      zip.file(getStageFilename(currentStageNumber), xmlText);
+    }
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const zipFileName = getZipFilename(startStageNumber);
+    await saveZipFile(zipFileName, zipBlob);
+    saveStatus.value = `ZIP 다운로드 완료: ${zipFileName}`;
+    warnings.value = warnings.value.filter((item) => !item.includes('저장') && !item.includes('생성 실패'));
+  } catch (error) {
+    saveStatus.value = '';
+    warnings.value = [
+      ...(warnings.value.filter((item) => !item.includes('저장') && !item.includes('생성 실패'))),
+      `저장 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`,
+    ];
+  } finally {
+    isSaving.value = false;
+  }
+}
+
 const groups = computed(() => generationState.value?.groups ?? []);
 const checkItems = computed(() => {
   const requiredWords = groups.value.flatMap((group) => group.words);
@@ -457,7 +567,10 @@ const checkItems = computed(() => {
   ];
 });
 
-const xmlPreview = computed(() => buildXmlText());
+const xmlPreview = computed(() => buildXmlText({
+  nextStageNumber: stageNumber.value,
+  state: generationState.value,
+}));
 
 handleRecommend();
 </script>
@@ -481,8 +594,8 @@ handleRecommend();
 
         <div class="field-grid two-columns">
           <label>
-            <span>스테이지 번호</span>
-            <input v-model.number="stageNumber" type="number" min="1" />
+            <span>시작 스테이지 번호</span>
+            <input v-model.number="stageNumber" type="number" min="1" @change="stageNumber = normalizeStageNumber(stageNumber)" />
           </label>
           <label>
             <span>Seed (0~100)</span>
@@ -545,9 +658,16 @@ handleRecommend();
           <button type="button" class="primary" @click="handleRecommend">추천하기</button>
           <button type="button" class="dark" @click="handleReroll">다시 추천</button>
         </div>
+
         <button type="button" class="success full-width" :disabled="isSaving" @click="handleSaveXml">
-          {{ isSaving ? '저장 중...' : 'stage.xml 저장' }}
+          {{ isSaving ? '저장 중...' : '현재 stage.xml 저장' }}
         </button>
+        <button type="button" class="batch full-width" :disabled="isSaving" @click="handleBatchDownload">
+          {{ isSaving ? 'ZIP 생성 중...' : `${batchStageCount}개 ZIP 다운로드` }}
+        </button>
+        <p class="helper-text batch-help">
+          시작 스테이지 번호부터 {{ batchStageCount }}개를 +1씩 생성해 ZIP으로 묶습니다.
+        </p>
         <p v-if="saveStatus" class="save-status">{{ saveStatus }}</p>
       </aside>
 
@@ -591,8 +711,8 @@ handleRecommend();
 
         <section class="summary-box warn">
           <h3>메모</h3>
-          <p>connector word는 {{ connectorMin }}~{{ connectorMax }}개 정도 필요할 것으로 예상됩니다.</p>
-          <p>현재 결과는 Seed {{ normalizeSeed(seed) }} 기준 추천 조합입니다.</p>
+          <p>현재 결과는 Seed {{ normalizeSeed(seed) }} + Stage {{ normalizeStageNumber(stageNumber) }} 기준 추천 조합입니다.</p>
+          <p>연결단어와 leaf단어 수는 생성 시 실제 배치 결과에 따라 결정됩니다.</p>
           <p v-for="warning in warnings" :key="warning">• {{ warning }}</p>
         </section>
 
@@ -696,6 +816,10 @@ small,
   font-weight: 700;
 }
 
+.batch-help {
+  margin: 10px 0 0;
+}
+
 .selector-block {
   margin-bottom: 16px;
 }
@@ -762,6 +886,13 @@ button:disabled {
 
 .success {
   background: #16a34a;
+  color: white;
+}
+
+.batch {
+  width: 100%;
+  margin-top: 10px;
+  background: #7c3aed;
   color: white;
 }
 
